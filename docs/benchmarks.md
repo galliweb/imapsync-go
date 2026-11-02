@@ -48,10 +48,29 @@ not compress.
 - Going from 1 to 16 connections raised the rate only from 1.1 to 1.4 msg/s,
   so more connections will not fix this. The baseline wrote to three folders at
   once and stayed at 1.3 msg/s, which points to a limit per account rather than
-  per folder. The cause is not known yet.
-- Whether the limit counts messages or bytes is not measured yet. The same data
-  was accepted at 221 msg/s by Infomaniak, so this is not a client limit.
+  per folder.
+- The same data was accepted at 221 msg/s by Infomaniak, so this is not a client
+  limit.
 - At this rate the full set would take about 3.5 hours.
+
+### MULTIAPPEND
+
+Measured local to cyon with a standalone client over one connection, because
+go-imap v2 has no MULTIAPPEND command. Every run was confirmed with `STATUS`.
+
+| Messages per APPEND | Messages | Size | Time | Rate | Per command |
+|---|---|---|---|---|---|
+| 1 | 40 | 5 MB | 32.1s | 1.2 msg/s, 0.17 MB/s | 804 ms |
+| 10 | 200 | 17 MB | 20.0s | 10.0 msg/s, 0.87 MB/s | 1.0 s |
+| 50 | 200 | 17 MB | 3.5s | 56.9 msg/s, 4.93 MB/s | 878 ms |
+| 200 | 1,000 | 96 MB | 12.6s | 79.3 msg/s, 7.65 MB/s | 2.5 s |
+| 1, messages over 1 MB | 15 | 79 MB | 15.1s | 1.0 msg/s, 5.21 MB/s | 1.0 s |
+
+- cyon's limit counts commands, not messages or bytes: one APPEND takes about
+  1 s whether it holds one small message, one large one or 50 small ones.
+- Batches of 200 are about 66 times faster than single APPENDs. At 7.65 MB/s,
+  20 GB would take about 44 minutes.
+- MULTIAPPEND over several connections at once is not measured yet.
 
 ### Known issue
 
