@@ -112,6 +112,10 @@ type DialOptions struct {
 
 type conn struct {
 	c *imapclient.Client
+
+	// tap carries MULTIAPPEND past go-imap. It is nil on a STARTTLS connection,
+	// where go-imap encrypts above it and there is nothing it could read.
+	tap *tap
 }
 
 var _ Conn = (*conn)(nil)
@@ -143,7 +147,7 @@ func Dial(ctx context.Context, opts DialOptions) (Conn, error) {
 
 	client, err := establish(dialCtx, opts, clientOpts, tlsConfig, timeout, secret)
 	if err == nil {
-		return &conn{c: client}, nil
+		return client, nil
 	}
 
 	// One retry, and only when the credential says it has something better.
@@ -175,7 +179,7 @@ func Dial(ctx context.Context, opts DialOptions) (Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("with renewed credentials: %w", err)
 	}
-	return &conn{c: client}, nil
+	return client, nil
 }
 
 // establish makes one complete attempt at a session: transport, TLS, and
@@ -187,7 +191,7 @@ func Dial(ctx context.Context, opts DialOptions) (Conn, error) {
 // and some do. And XOAUTH2 reports failure as a challenge the client must
 // answer, so a refused exchange leaves the connection mid-command; reusing it
 // would send the next command where the server expects a SASL response.
-func establish(ctx context.Context, opts DialOptions, clientOpts *imapclient.Options, tlsConfig *tls.Config, timeout time.Duration, secret string) (*imapclient.Client, error) {
+func establish(ctx context.Context, opts DialOptions, clientOpts *imapclient.Options, tlsConfig *tls.Config, timeout time.Duration, secret string) (*conn, error) {
 	addr := opts.Addr.HostPort()
 	raw, err := dialRaw(ctx, opts.Addr, tlsConfig, timeout)
 	if err != nil {
@@ -201,7 +205,7 @@ func establish(ctx context.Context, opts DialOptions, clientOpts *imapclient.Opt
 	// the caller for as long as it likes. Racing the context also makes Dial
 	// answer to cancellation, which Login().Wait() does not.
 	type result struct {
-		client *imapclient.Client
+		client *conn
 		err    error
 	}
 	done := make(chan result, 1)
@@ -278,10 +282,13 @@ func (e *credentialRefusedError) Unwrap() error { return e.err }
 
 // authenticate upgrades the transport if needed and offers the secret. It
 // blocks until the server answers, so establish runs it under a context race.
-func authenticate(raw net.Conn, clientOpts *imapclient.Options, opts DialOptions, secret string) (*imapclient.Client, error) {
+func authenticate(raw net.Conn, clientOpts *imapclient.Options, opts DialOptions, secret string) (*conn, error) {
 	addr := opts.Addr.HostPort()
 
-	var client *imapclient.Client
+	var (
+		client *imapclient.Client
+		tapped *tap
+	)
 	if opts.Addr.TLS == config.TLSStartTLS {
 		var err error
 		client, err = imapclient.NewStartTLS(raw, clientOpts)
@@ -289,14 +296,15 @@ func authenticate(raw net.Conn, clientOpts *imapclient.Options, opts DialOptions
 			return nil, fmt.Errorf("negotiating STARTTLS with %s: %w", addr, err)
 		}
 	} else {
-		client = imapclient.New(raw, clientOpts)
+		tapped = newTap(raw, clientOpts.DebugWriter)
+		client = imapclient.New(tapped, clientOpts)
 	}
 
 	if err := offer(client, opts.Credential.Mechanism(), opts.Addr.User, secret); err != nil {
 		_ = client.Close()
 		return nil, &credentialRefusedError{user: opts.Addr.User, err: err}
 	}
-	return client, nil
+	return &conn{c: client, tap: tapped}, nil
 }
 
 // offer presents the secret using the mechanism the credential asks for.

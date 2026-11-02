@@ -70,6 +70,25 @@ const stateWriteGrace = 10 * time.Second
 // across every connection there is.
 const copyChunk = 50
 
+// batchMessages and batchBytes bound one MULTIAPPEND, whichever comes first.
+//
+// Measured against cyon, whose cost is per command: 50 messages reached 57 msg/s
+// and 200 reached 79. The bytes limit is what keeps a run of attachments from
+// holding a connection, and a share of the memory budget, for minutes at a time.
+// A larger batch also costs more when it fails, since a refused batch is sent
+// again one message at a time.
+const (
+	batchMessages = 200
+	batchBytes    = 32 << 20
+)
+
+// batchLinger is how long a batch that is not yet full waits for company.
+//
+// Sending the moment a worker is free would fill the first few commands with a
+// message each. Waiting has a ceiling so that a slow source, or the tail of a
+// folder, does not leave what has been fetched sitting in memory.
+const batchLinger = 250 * time.Millisecond
+
 // Options configures a run.
 type Options struct {
 	// PairID names this source/destination pairing in the state database, so
@@ -1893,17 +1912,39 @@ func (s *Syncer) copyFolder(ctx context.Context, pair folder.Pair, p *prepared, 
 		return err
 	})
 
-	for range min(s.dst.Cap(), len(p.todo)) {
+	workers := min(s.dst.Cap(), len(p.todo))
+	if s.canBatch(gctx) {
+		batches := make(chan []*pendingAppend)
 		g.Go(func() error {
-			for item := range pending {
-				err := s.deliver(gctx, p, pair.Dest, item, lv)
-				item.release()
-				if err != nil {
-					return err
-				}
-			}
-			return nil
+			return collectBatches(gctx, pending, batches)
 		})
+		for range workers {
+			g.Go(func() error {
+				for batch := range batches {
+					err := s.deliverBatch(gctx, p, pair.Dest, batch, lv)
+					for _, item := range batch {
+						item.release()
+					}
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		}
+	} else {
+		for range workers {
+			g.Go(func() error {
+				for item := range pending {
+					err := s.deliver(gctx, p, pair.Dest, item, lv)
+					item.release()
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		}
 	}
 
 	err := g.Wait()
@@ -2808,6 +2849,158 @@ func (s *Syncer) deliver(ctx context.Context, p *prepared, dstName string, item 
 			return err
 		}
 	}
+}
+
+// canBatch reports whether the destination can store several messages with one
+// command. Every connection to a server answers alike, so asking one is enough.
+func (s *Syncer) canBatch(ctx context.Context) bool {
+	lease, err := s.dst.Acquire(ctx, "")
+	if err != nil {
+		return false
+	}
+	defer lease.Release(nil)
+
+	batcher, ok := lease.Conn().(imapx.BatchAppender)
+	return ok && batcher.CanAppendBatch()
+}
+
+// collectBatches groups fetched messages into batches for the append workers.
+//
+// It is one goroutine ahead of the workers rather than something each of them
+// does for itself, because workers drawing from one queue would split it evenly
+// between them. Sixteen workers make sixteen small batches, and small batches
+// are the thing that is slow: a server that spends a second on each command
+// gains nothing from more commands.
+func collectBatches(ctx context.Context, pending <-chan *pendingAppend, batches chan<- []*pendingAppend) error {
+	defer close(batches)
+
+	var (
+		batch    []*pendingAppend
+		size     int
+		lingered <-chan time.Time
+		settled  bool
+		closed   bool
+	)
+	for {
+		if closed && len(batch) == 0 {
+			return nil
+		}
+		full := len(batch) >= batchMessages || size >= batchBytes
+
+		intake := pending
+		if full || closed {
+			intake = nil
+		}
+		var out chan<- []*pendingAppend
+		if len(batch) > 0 && (full || closed || settled) {
+			out = batches
+		}
+
+		select {
+		case item, ok := <-intake:
+			if !ok {
+				closed = true
+				continue
+			}
+			if len(batch) == 0 {
+				lingered = time.After(batchLinger)
+			}
+			batch = append(batch, item)
+			size += len(item.body)
+
+		case <-lingered:
+			lingered = nil
+			settled = true
+
+		case out <- batch:
+			batch, size, lingered, settled = nil, 0, nil, false
+
+		case <-ctx.Done():
+			for _, item := range batch {
+				item.release()
+			}
+			return ctx.Err()
+		}
+	}
+}
+
+// deliverBatch stores a batch and records where each message landed.
+//
+// A batch has no partial outcome to work through. Either every message arrived
+// or, when the server refused, none did; and since a refusal does not say which
+// message it was about, the only way to keep the rest moving is to go through
+// them one at a time, where each is judged by itself.
+func (s *Syncer) deliverBatch(ctx context.Context, p *prepared, dstName string, batch []*pendingAppend, lv *live) error {
+	if len(batch) == 1 {
+		return s.deliver(ctx, p, dstName, batch[0], lv)
+	}
+
+	results, err := s.appendBatch(ctx, dstName, batch)
+	if err == nil {
+		for i, item := range batch {
+			if err := s.settle(ctx, p, dstName, item, results[i], lv); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	kind := retry.Classify(err)
+	lv.health.trouble(err)
+	if kind == retry.Stop {
+		return err
+	}
+	s.log.Warn("batch append failed, sending messages one at a time",
+		"folder", dstName, "messages", len(batch), "action", kind.String(), "error", err)
+
+	// A refusal stored nothing. A connection lost mid-batch may have stored all
+	// of it, for the same reason a lost APPEND may have, so here each message is
+	// looked for before it is sent again.
+	uncertain := errors.Is(err, imapx.ErrConnectionBroken)
+	for _, item := range batch {
+		if uncertain {
+			landed, lerr := s.locateOnDest(ctx, dstName, item.id, item.stamped)
+			if lerr != nil {
+				return lerr
+			}
+			if landed != 0 {
+				if err := s.record(ctx, p, item, p.dst.UIDValidity, landed, lv); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if err := s.deliver(ctx, p, dstName, item, lv); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// appendBatch holds a destination connection for one batch. Like appendOne, it
+// names no mailbox.
+func (s *Syncer) appendBatch(ctx context.Context, dstName string, batch []*pendingAppend) (res []imapx.AppendResult, err error) {
+	lease, err := s.dst.Acquire(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("acquiring destination connection: %w", err)
+	}
+	defer func() { lease.Release(err) }()
+
+	batcher, ok := lease.Conn().(imapx.BatchAppender)
+	if !ok {
+		return nil, errors.New("destination connection cannot batch")
+	}
+
+	msgs := make([]imapx.AppendMessage, len(batch))
+	for i, item := range batch {
+		msgs[i] = imapx.AppendMessage{
+			Size:         int64(len(item.body)),
+			Flags:        item.flags,
+			InternalDate: item.internalDate,
+			Body:         bytes.NewReader(item.body),
+		}
+	}
+	return batcher.AppendBatch(ctx, dstName, msgs)
 }
 
 // settle works out where an accepted message landed and records it.

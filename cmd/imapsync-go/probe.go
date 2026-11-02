@@ -303,7 +303,7 @@ func writeReport(p *printer, label string, r *probe.Report) {
 		{"SPECIAL-USE", r.Caps.SpecialUse, "map folders by attribute, not by name"},
 		{"LIST-EXTENDED", r.Caps.ListExtended, "LIST return options; without it, plain RFC 3501 LIST"},
 		{"MOVE", r.Caps.Move, "cheap moves"},
-		{"MULTIAPPEND", r.Caps.MultiAppend, "not yet used: unimplemented in go-imap/v2"},
+		{"MULTIAPPEND", r.Caps.MultiAppend, "many messages per APPEND, with LITERAL+ and implicit TLS"},
 		{"LIST-STATUS", r.Caps.ListStatus, listStatusNote},
 		{"LITERAL+", r.Caps.LiteralPlus, "saves a round trip per append"},
 	} {
