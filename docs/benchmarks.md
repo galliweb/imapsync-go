@@ -126,6 +126,14 @@ about 1.52 GB, 16 / 16 connections, 0 failures, 0 warnings.
   UIDs again: bytes, flags and internal dates.
 - At 13.7 MB/s, 20 GB would take about 24 minutes.
 
+### The other direction
+
+cyon to Infomaniak into a fresh folder: 17,080 messages, about 1.52 GB, in 45s,
+at 379 msg/s and about 34 MB/s, with 0 failures and 0 warnings. The `INBOX.`
+prefix was dropped from every folder name without `--map`. Following all 17,180
+originals through Infomaniak, cyon and back to Infomaniak by their recorded UIDs
+found bytes, flags and internal dates intact.
+
 ### Other measurements
 
 | Run | Data | Time | Rate |
