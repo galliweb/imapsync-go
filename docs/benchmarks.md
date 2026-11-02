@@ -184,6 +184,31 @@ to the synthetic runs. Contents, flags and dates were not compared on this run.
 A webmail holds its folder list for the session, so folders created or deleted
 during a migration may not show until the next login.
 
+### Two migrations at once
+
+Two runs started together from one Mac, each its own process with its own state
+database, at 8 / 6 connections. Both read the 1.53 GB set from the same Infomaniak
+account and wrote to a fresh folder. Each route then ran alone at the same
+settings, minutes later.
+
+| Route | Together | Alone |
+|---|---|---|
+| Infomaniak to cyon | 1m17s, 222 msg/s, about 20 MB/s | 1m25s, 201 msg/s, about 18 MB/s |
+| Infomaniak to Metanet | 46s, 371 msg/s, about 33 MB/s | 47s, 363 msg/s, about 32 MB/s |
+
+- 0 failures in all four runs, and neither route slowed down next to the other.
+- The two runs overlapped for the first 46s. They shared a source account but not
+  a destination, so this says nothing about two migrations into one hoster.
+- Reading both parallel copies back confirmed all 17,180 originals through the
+  recorded UIDs: bytes, flags and internal dates. Repeat runs found nothing to
+  copy. The runs alone were only timed.
+- Peak memory was 833 MB to cyon and 510 MB to Metanet together, and 904 MB to
+  cyon alone, at the default `--memory-limit` of 256 MiB. That flag covers message
+  data, not the whole process.
+- cyon took 18 to 20 MB/s here against 13.7 MB/s in the earlier full runs at
+  16 / 16. Both the connection count and the time of day differ, so this does not
+  show which one helped.
+
 ### Other measurements
 
 | Run | Data | Time | Rate |
