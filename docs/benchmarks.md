@@ -205,9 +205,23 @@ settings, minutes later.
 - Peak memory was 833 MB to cyon and 510 MB to Metanet together, and 904 MB to
   cyon alone, at the default `--memory-limit` of 256 MiB. That flag covers message
   data, not the whole process.
-- cyon took 18 to 20 MB/s here against 13.7 MB/s in the earlier full runs at
-  16 / 16. Both the connection count and the time of day differ, so this does not
-  show which one helped.
+
+### Connection count to cyon
+
+Infomaniak to cyon four times in a row in the evening, alternating the setting,
+each run alone into a fresh folder:
+
+| Connections | Time | Rate | Peak memory |
+|---|---|---|---|
+| 16 / 16 | 1m28s | 194 msg/s, about 17 MB/s | 814 MB |
+| 8 / 6 | 1m26s | 199 msg/s, about 18 MB/s | 842 MB |
+| 16 / 16 | 1m29s | 193 msg/s, about 17 MB/s | 846 MB |
+| 8 / 6 | 1m31s | 187 msg/s, about 17 MB/s | 839 MB |
+
+- 0 failures and 0 warnings. Runs at the same setting differ by more than the
+  settings do, so 8 / 6 costs nothing on this route and saves no memory.
+- The same 16 / 16 took 1m51s in the afternoon, so the gap to the earlier full
+  runs is not the connection count. The cause was not measured.
 
 ### Other measurements
 
