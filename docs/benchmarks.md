@@ -92,8 +92,9 @@ messages or 32 MiB, at 16 / 16 connections.
 - At 4.8 MB/s, 20 GB would take about 70 minutes. The single-connection
   measurement reached 7.65 MB/s, so some of the gap is in the pipeline.
 
-### Known issue
+### Folder mapping in these runs
 
-The NAMESPACE prefix never reaches the folder planner: `folder.Options.DestPrefix`
-is not set anywhere. New folders on cyon would be planned outside the `INBOX.`
-namespace, so these runs mapped each one with `--map`.
+These runs predate namespace detection, so each new folder on cyon was mapped
+into the `INBOX.` namespace with `--map`. Detection now plans the same names on
+its own: a dry run without `--map` against the finished migration found all
+17,180 messages already done.

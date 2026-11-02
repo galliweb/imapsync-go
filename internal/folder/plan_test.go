@@ -247,6 +247,99 @@ func TestDelimiterTranslation(t *testing.T) {
 	}
 }
 
+// prefixedFolders is a Dovecot destination with everything nested under INBOX,
+// as cyon runs it.
+func prefixedFolders() []imapx.Folder {
+	return []imapx.Folder{
+		{Name: "INBOX", Delim: ".", Selectable: true},
+		{Name: "INBOX.Sent", Delim: ".", Selectable: true, SpecialUse: `\Sent`},
+	}
+}
+
+func TestDestinationPrefixHoldsEveryNewFolder(t *testing.T) {
+	t.Parallel()
+
+	source := []imapx.Folder{
+		mailbox("INBOX"),
+		{Name: "Sent", Delim: "/", Selectable: true, SpecialUse: `\Sent`},
+		{Name: "Archiv", Delim: "/", Selectable: true},
+		{Name: "Archiv/2023", Delim: "/", Selectable: true},
+		{Name: "INBOX/Child", Delim: "/", Selectable: true},
+	}
+
+	plan, err := Build(source, prefixedFolders(), Options{
+		SourceDelim: "/", DestDelim: ".", DestPrefix: "INBOX.", Automap: true,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	for _, tc := range []struct{ source, wantDest string }{
+		{"INBOX", "INBOX"},
+		{"Sent", "INBOX.Sent"},
+		{"Archiv", "INBOX.Archiv"},
+		{"Archiv/2023", "INBOX.Archiv.2023"},
+		{"INBOX/Child", "INBOX.Child"},
+	} {
+		if got := destFor(t, plan, tc.source).Dest; got != tc.wantDest {
+			t.Errorf("%q maps to %q, want %q", tc.source, got, tc.wantDest)
+		}
+	}
+	for _, name := range plan.Creates {
+		if !strings.HasPrefix(name, "INBOX.") {
+			t.Errorf("planned to create %q outside the namespace", name)
+		}
+	}
+}
+
+// TestAnExplicitMappingIgnoresThePrefix leaves an escape hatch: somebody naming
+// a destination in full has said exactly where it goes.
+func TestAnExplicitMappingIgnoresThePrefix(t *testing.T) {
+	t.Parallel()
+
+	source := []imapx.Folder{mailbox("INBOX"), {Name: "Work", Delim: "/", Selectable: true}}
+	plan, err := Build(source, prefixedFolders(), Options{
+		SourceDelim: "/", DestDelim: ".", DestPrefix: "INBOX.",
+		Mappings: map[string]string{"Work": "Shared.Team"},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := destFor(t, plan, "Work").Dest; got != "Shared.Team" {
+		t.Errorf("Work maps to %q, want Shared.Team", got)
+	}
+}
+
+// TestDestSubfolderStaysInsideThePrefix also accepts a subfolder given in full,
+// which is what anyone had to write before prefixes were detected.
+func TestDestSubfolderStaysInsideThePrefix(t *testing.T) {
+	t.Parallel()
+
+	for _, subfolder := range []string{"Backup", "INBOX.Backup"} {
+		source := []imapx.Folder{
+			mailbox("INBOX"),
+			{Name: "Sent", Delim: "/", Selectable: true, SpecialUse: `\Sent`},
+			{Name: "Work", Delim: "/", Selectable: true},
+		}
+		plan, err := Build(source, prefixedFolders(), Options{
+			SourceDelim: "/", DestDelim: ".", DestPrefix: "INBOX.", Automap: true,
+			DestSubfolder: subfolder,
+		})
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		for _, tc := range []struct{ source, wantDest string }{
+			{"INBOX", "INBOX.Backup.INBOX"},
+			{"Sent", "INBOX.Backup.Sent"},
+			{"Work", "INBOX.Backup.Work"},
+		} {
+			if got := destFor(t, plan, tc.source).Dest; got != tc.wantDest {
+				t.Errorf("with subfolder %q, %q maps to %q, want %q", subfolder, tc.source, got, tc.wantDest)
+			}
+		}
+	}
+}
+
 // TestANameCarryingTheDestinationDelimiterIsRefused covers a folder whose own
 // name contains the destination's separator. Writing it out would silently turn
 // one mailbox into two levels of somebody else's tree.

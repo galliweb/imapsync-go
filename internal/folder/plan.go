@@ -288,9 +288,11 @@ func destinationFor(name, rel string, role Role, opts Options, destByRole map[Ro
 	if err != nil {
 		return "", err
 	}
-	return withSubfolder(opts.DestPrefix+translated, opts), nil
+	return withSubfolder(underPrefix(translated, opts.DestPrefix), opts), nil
 }
 
+// withSubfolder nests name under the destination subfolder, which belongs inside
+// the namespace rather than around it.
 func withSubfolder(name string, opts Options) string {
 	if opts.DestSubfolder == "" {
 		return name
@@ -299,7 +301,17 @@ func withSubfolder(name string, opts Options) string {
 	if delim == "" {
 		delim = "/"
 	}
-	return opts.DestSubfolder + delim + name
+	return underPrefix(opts.DestSubfolder, opts.DestPrefix) + delim + stripPrefix(name, opts.DestPrefix)
+}
+
+// underPrefix places name in a namespace. A name already there stays as it is:
+// a child of INBOX on a source without a prefix is exactly where a destination
+// prefixed with INBOX wants it, not one level further down.
+func underPrefix(name, prefix string) string {
+	if len(name) >= len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+		return name
+	}
+	return prefix + name
 }
 
 // translate rewrites a hierarchy from the source's delimiter to the

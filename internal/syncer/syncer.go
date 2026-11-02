@@ -857,6 +857,12 @@ func (s *Syncer) plan(ctx context.Context) (folder.Plan, error) {
 	if opts.DestDelim == "" {
 		opts.DestDelim = dstDelim
 	}
+	if opts.SourcePrefix, err = s.personalPrefix(ctx, s.src); err != nil {
+		return folder.Plan{}, fmt.Errorf("reading source namespace: %w", err)
+	}
+	if opts.DestPrefix, err = s.personalPrefix(ctx, s.dst); err != nil {
+		return folder.Plan{}, fmt.Errorf("reading destination namespace: %w", err)
+	}
 
 	plan, err := folder.Build(srcFolders, dstFolders, opts)
 	if err != nil {
@@ -865,6 +871,27 @@ func (s *Syncer) plan(ctx context.Context) (folder.Plan, error) {
 	s.log.Info("planned run",
 		"folders", len(plan.Pairs), "skipped", len(plan.Skips), "to_create", len(plan.Creates))
 	return plan, nil
+}
+
+// personalPrefix asks an account where its folders live.
+//
+// A server with a prefix keeps everything but INBOX below it. Dovecot refuses a
+// CREATE outside the prefix, and a source's prefix would otherwise be copied
+// along as a folder of its own. An unanswered question stops the plan rather
+// than being read as "none", because folders planned in the wrong place are
+// created there.
+func (s *Syncer) personalPrefix(ctx context.Context, p *pool.Pool) (prefix string, err error) {
+	lease, err := p.Acquire(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("acquiring connection: %w", err)
+	}
+	defer func() { lease.Release(err) }()
+
+	ns, err := lease.Conn().Namespaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	return ns.PersonalPrefix, nil
 }
 
 // list enumerates one account's mailboxes and settles its hierarchy delimiter.
