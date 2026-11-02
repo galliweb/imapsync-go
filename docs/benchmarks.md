@@ -70,7 +70,27 @@ go-imap v2 has no MULTIAPPEND command. Every run was confirmed with `STATUS`.
   1 s whether it holds one small message, one large one or 50 small ones.
 - Batches of 200 are about 66 times faster than single APPENDs. At 7.65 MB/s,
   20 GB would take about 44 minutes.
-- MULTIAPPEND over several connections at once is not measured yet.
+
+### With MULTIAPPEND in the sync
+
+The stopped baseline, resumed from its state database with batches of up to 200
+messages or 32 MiB, at 16 / 16 connections.
+
+| Run | Direction | Data | Time | Rate |
+|---|---|---|---|---|
+| Baseline, resumed | Infomaniak to cyon | 16,287 msgs, about 1.45 GB | 5m4s | 53.6 msg/s, about 4.8 MB/s |
+
+- That is 41 times the rate of single APPENDs. The whole set would take about
+  5.5 minutes instead of 3.5 hours.
+- 0 failures and 0 warnings. A repeat run found nothing to copy.
+- Reading everything back from cyon confirmed all 17,180 originals through the
+  recorded UIDs: bytes identical, flags and internal dates preserved. 150
+  messages carry the added `X-Imapsync-Go-Id` stamp. 100 duplicates share a copy
+  as intended.
+- Each message also gained a `$HasAttachment` or `$HasNoAttachment` keyword from
+  a server. It is correct on every message and not set by this tool.
+- At 4.8 MB/s, 20 GB would take about 70 minutes. The single-connection
+  measurement reached 7.65 MB/s, so some of the gap is in the pipeline.
 
 ### Known issue
 
