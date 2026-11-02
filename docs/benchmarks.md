@@ -153,6 +153,23 @@ same set, at 16 / 16 connections, each into a fresh folder:
 - Metanet to cyon matches Infomaniak to cyon, which points at cyon as the limit
   on that route.
 
+### 17.7 GB
+
+A larger synthetic set of 202,045 messages and 17.74 GB, with the same mix, at
+16 / 16 connections and default memory limit:
+
+| Run | Messages | Time | Rate |
+|---|---|---|---|
+| Local to Infomaniak | 202,045 | 1m52s | 1,805 msg/s, about 158 MB/s |
+| Infomaniak to cyon | 200,878 | 23m6s | 144.9 msg/s, about 12.7 MB/s |
+
+- 0 failures and 0 warnings. 1,167 duplicates were left out as intended.
+- The rate held between 142 and 205 msg/s for the whole run, with no sign of the
+  server throttling sustained load.
+- Reading everything back confirmed all 202,045 originals through the recorded
+  UIDs: bytes, flags and internal dates. A repeat run found nothing to copy.
+- At this rate 20 GB takes about 26 minutes, inside the 20 to 45 minute target.
+
 ### A real mailbox
 
 A business mailbox from Metanet to cyon: 12 folders, 4,916 messages, 1.74 GB,
