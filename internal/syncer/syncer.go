@@ -72,22 +72,34 @@ const copyChunk = 50
 
 // batchMessages and batchBytes bound one MULTIAPPEND, whichever comes first.
 //
-// Measured against cyon, whose cost is per command: 50 messages reached 57 msg/s
-// and 200 reached 79. The bytes limit is what keeps a run of attachments from
-// holding a connection, and a share of the memory budget, for minutes at a time.
-// A larger batch also costs more when it fails, since a refused batch is sent
-// again one message at a time.
+// Measured against cyon, whose cost is per command, writing 547 MB over four
+// connections: batches of 200 reached 10.8 MB/s, 500 reached 17.1 and 1000
+// reached 20.0 on twice the memory. The bytes limit keeps a run of attachments
+// from holding a connection for minutes, and four batches of this size are
+// exactly the default memory budget. A larger batch also costs more when it
+// fails, since a refused batch is sent again one message at a time.
 const (
-	batchMessages = 200
-	batchBytes    = 32 << 20
+	batchMessages = 500
+	batchBytes    = 64 << 20
 )
 
 // batchLinger is how long a batch that is not yet full waits for company.
 //
 // Sending the moment a worker is free would fill the first few commands with a
-// message each. Waiting has a ceiling so that a slow source, or the tail of a
-// folder, does not leave what has been fetched sitting in memory.
-const batchLinger = 250 * time.Millisecond
+// message each. Waiting has a ceiling so that a slow source does not leave what
+// has been fetched sitting in memory, and the tail of a folder does not wait at
+// all.
+const batchLinger = time.Second
+
+// batchSlots is how many batches may be on their way to the destination at once,
+// across all folders.
+//
+// More is worse, which is unusual enough to record: cyon works through commands
+// one or so per second however many arrive, so extra ones queue at the server
+// holding their bytes, and the memory budget left for filling the next batch
+// shrinks. With batches of 200, 16 connections reached 9.7 MB/s and 4 reached
+// 10.8. Two were too few at 5.0.
+const batchSlots = 4
 
 // Options configures a run.
 type Options struct {
@@ -275,6 +287,8 @@ type Syncer struct {
 	// earlier runs, so a count that is too low by this run's own copies cannot
 	// make it miss anything — it can only make it look, and looking is correct.
 	destStatus map[string]imapx.Folder
+	// slots holds a token per batch on its way to the destination.
+	slots chan struct{}
 }
 
 // New returns a syncer over two connection pools.
@@ -298,6 +312,7 @@ func New(src, dst *pool.Pool, db *state.DB, bytes *budget.Budget, opts Options) 
 	return &Syncer{
 		src: src, dst: dst, bytes: bytes, db: db, opts: opts, log: log,
 		filter: opts.Filter, started: time.Now(),
+		slots: make(chan struct{}, batchSlots),
 	}
 }
 
@@ -1943,12 +1958,13 @@ func (s *Syncer) copyFolder(ctx context.Context, pair folder.Pair, p *prepared, 
 	if s.canBatch(gctx) {
 		batches := make(chan []*pendingAppend)
 		g.Go(func() error {
-			return collectBatches(gctx, pending, batches)
+			return s.collectBatches(gctx, pending, batches)
 		})
 		for range workers {
 			g.Go(func() error {
 				for batch := range batches {
 					err := s.deliverBatch(gctx, p, pair.Dest, batch, lv)
+					<-s.slots
 					for _, item := range batch {
 						item.release()
 					}
@@ -2898,8 +2914,23 @@ func (s *Syncer) canBatch(ctx context.Context) bool {
 // between them. Sixteen workers make sixteen small batches, and small batches
 // are the thing that is slow: a server that spends a second on each command
 // gains nothing from more commands.
-func collectBatches(ctx context.Context, pending <-chan *pendingAppend, batches chan<- []*pendingAppend) error {
+//
+// A batch is sealed by taking a slot, not merely by being old enough. While every
+// slot is busy it keeps growing, which is what makes a busy server get full
+// batches. Sealing first and queueing for a slot afterwards sent a run of nine
+// folders at about 7 MB/s, each batch frozen at what its folder's share of the
+// source had managed in a second.
+//
+// The worker that receives a batch gives its slot back.
+func (s *Syncer) collectBatches(ctx context.Context, pending <-chan *pendingAppend, batches chan<- []*pendingAppend) error {
 	defer close(batches)
+
+	giveUp := func(batch []*pendingAppend) error {
+		for _, item := range batch {
+			item.release()
+		}
+		return ctx.Err()
+	}
 
 	var (
 		batch    []*pendingAppend
@@ -2918,9 +2949,9 @@ func collectBatches(ctx context.Context, pending <-chan *pendingAppend, batches 
 		if full || closed {
 			intake = nil
 		}
-		var out chan<- []*pendingAppend
+		var slot chan<- struct{}
 		if len(batch) > 0 && (full || closed || settled) {
-			out = batches
+			slot = s.slots
 		}
 
 		select {
@@ -2939,14 +2970,17 @@ func collectBatches(ctx context.Context, pending <-chan *pendingAppend, batches 
 			lingered = nil
 			settled = true
 
-		case out <- batch:
+		case slot <- struct{}{}:
+			select {
+			case batches <- batch:
+			case <-ctx.Done():
+				<-s.slots
+				return giveUp(batch)
+			}
 			batch, size, lingered, settled = nil, 0, nil, false
 
 		case <-ctx.Done():
-			for _, item := range batch {
-				item.release()
-			}
-			return ctx.Err()
+			return giveUp(batch)
 		}
 	}
 }
