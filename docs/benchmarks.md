@@ -153,6 +153,20 @@ same set, at 16 / 16 connections, each into a fresh folder:
 - Metanet to cyon matches Infomaniak to cyon, which points at cyon as the limit
   on that route.
 
+### A real mailbox
+
+A business mailbox from Metanet to cyon: 12 folders, 4,916 messages, 1.74 GB,
+averaging about 350 KB, the largest 41 MB. It took 2m19s at 35 msg/s and about
+12.5 MB/s, with 0 failures and 0 warnings. Every folder's count matched the
+source, a repeat run found nothing to copy, and no `--map` was needed. At that
+rate 20 GB would take about 27 minutes.
+
+Larger messages lower the message rate but not the byte rate, which stayed close
+to the synthetic runs. Contents, flags and dates were not compared on this run.
+
+A webmail holds its folder list for the session, so folders created or deleted
+during a migration may not show until the next login.
+
 ### Other measurements
 
 | Run | Data | Time | Rate |
