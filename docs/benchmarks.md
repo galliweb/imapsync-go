@@ -92,6 +92,52 @@ messages or 32 MiB, at 16 / 16 connections.
 - At 4.8 MB/s, 20 GB would take about 70 minutes. The single-connection
   measurement reached 7.65 MB/s, so some of the gap is in the pipeline.
 
+### Tuning the batches
+
+Writing the three `Archiv` folders, 6,585 messages and 547 MB, local to cyon:
+
+| Messages per batch | Bytes per batch | Connections | Rate |
+|---|---|---|---|
+| 200 | 32 MiB | 16 | 9.72 MB/s |
+| 200 | 32 MiB | 8 | 8.89 MB/s |
+| 200 | 32 MiB | 4 | 10.76 MB/s |
+| 200 | 32 MiB | 2 | 5.00 MB/s |
+| 500 | 64 MiB | 4 | 17.10 MB/s |
+| 1,000 | 128 MiB | 4, with a 512 MiB memory limit | 19.99 MB/s |
+
+cyon handled about one command per second however many were waiting, so past
+four connections extra commands only queue while holding memory. Bigger batches
+are what helps. The sync now sends up to 500 messages or 64 MiB per batch, with
+four batches in flight across all folders.
+
+### Full runs after tuning
+
+The whole set, Infomaniak to cyon, into a fresh folder each time. 17,080 messages,
+about 1.52 GB, 16 / 16 connections, 0 failures, 0 warnings.
+
+| Batches | Time | Rate |
+|---|---|---|
+| Sealed before a slot was free | 3m27s | 82.5 msg/s, about 7.4 MB/s |
+| Sealed by taking a slot | 1m51s | 153.6 msg/s, about 13.7 MB/s |
+
+- With nine folders running, each saw a ninth of the source, so a batch sealed
+  early froze small. A batch that keeps growing until a slot is free stays full.
+- Reading everything back confirmed all 17,180 originals through the recorded
+  UIDs again: bytes, flags and internal dates.
+- At 13.7 MB/s, 20 GB would take about 24 minutes.
+
+### Other measurements
+
+| Run | Data | Time | Rate |
+|---|---|---|---|
+| Read only, Infomaniak to local | 17,180 msgs, 1.53 GB | 58s | 299 msg/s, 26.6 MB/s |
+| Read only, cyon to local | 17,080 msgs, about 1.52 GB | 57s | 301 msg/s, 26.8 MB/s |
+| Write only, local to Infomaniak, batched | 6,585 msgs, 547 MB | 1.7s | 3,840 msg/s, about 320 MB/s |
+
+- The Infomaniak write was checked by reading back all 6,621 originals. Without
+  batches the same server took 19.7 MB/s, so that figure was never the uplink.
+- Reading is now the next limit. It is one FETCH per message, on both servers.
+
 ### Folder mapping in these runs
 
 These runs predate namespace detection, so each new folder on cyon was mapped
