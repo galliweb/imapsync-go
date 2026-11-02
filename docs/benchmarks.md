@@ -130,13 +130,19 @@ about 1.52 GB, 16 / 16 connections, 0 failures, 0 warnings.
 
 | Run | Data | Time | Rate |
 |---|---|---|---|
-| Read only, Infomaniak to local | 17,180 msgs, 1.53 GB | 58s | 299 msg/s, 26.6 MB/s |
-| Read only, cyon to local | 17,080 msgs, about 1.52 GB | 57s | 301 msg/s, 26.8 MB/s |
-| Write only, local to Infomaniak, batched | 6,585 msgs, 547 MB | 1.7s | 3,840 msg/s, about 320 MB/s |
+| Infomaniak to local files | 17,180 msgs, 1.53 GB | 58s | 299 msg/s, 26.6 MB/s |
+| cyon to local files | 17,080 msgs, about 1.52 GB | 57s | 301 msg/s, 26.8 MB/s |
+| Local to Infomaniak, batched | 6,585 msgs, 547 MB | 1.7s | 3,840 msg/s, about 320 MB/s |
+| Infomaniak to Infomaniak, batched | 6,585 msgs, 547 MB | 9.2s | 714 msg/s, about 59 MB/s |
+| cyon to Infomaniak, batched | 6,585 msgs, 547 MB | 8.6s | 767 msg/s, about 64 MB/s |
 
-- The Infomaniak write was checked by reading back all 6,621 originals. Without
+- The local write was checked by reading back all 6,621 originals. Without
   batches the same server took 19.7 MB/s, so that figure was never the uplink.
-- Reading is now the next limit. It is one FETCH per message, on both servers.
+- The two runs to local files stop at the same rate because of the local store,
+  which writes one file per message. They say nothing about either server.
+- With a fast destination, both servers read at over 700 msg/s with one FETCH per
+  message. That is several times what cyon can store, so reading does not limit
+  a migration to cyon and batching FETCH would not speed one up.
 
 ### Folder mapping in these runs
 
