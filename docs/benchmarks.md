@@ -134,6 +134,25 @@ prefix was dropped from every folder name without `--map`. Following all 17,180
 originals through Infomaniak, cyon and back to Infomaniak by their recorded UIDs
 found bytes, flags and internal dates intact.
 
+### Metanet
+
+Metanet held 16 of 16 probed connections and offers MULTIAPPEND and
+COMPRESS=DEFLATE. Its personal namespace is `INBOX.`, delimiter `.`. Runs on the
+same set, at 16 / 16 connections, each into a fresh folder:
+
+| Run | Messages | Time | Rate |
+|---|---|---|---|
+| Local to Metanet | 17,180 | 40s | 428 msg/s, about 38 MB/s |
+| Metanet to cyon | 17,080 | 1m44s | 164.5 msg/s, about 14.6 MB/s |
+| Metanet to Infomaniak | 17,080 | 21s | 830 msg/s, about 74 MB/s |
+
+- 0 failures and 0 warnings in all three. The upload created every new folder
+  under `INBOX.` without `--map`.
+- Reading both destinations back confirmed all 17,180 originals through the
+  recorded UIDs: bytes, flags and internal dates.
+- Metanet to cyon matches Infomaniak to cyon, which points at cyon as the limit
+  on that route.
+
 ### Other measurements
 
 | Run | Data | Time | Rate |
